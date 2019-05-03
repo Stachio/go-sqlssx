@@ -4,10 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"printssx"
 	"strings"
 
 	"github.com/Stachio/go-extdata"
+	"github.com/Stachio/go-printssx"
 	"github.com/fatih/structs"
 
 	//Mysql driver
