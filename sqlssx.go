@@ -57,6 +57,7 @@ func Open(server, port, dbName, user string, pass []rune) (db *Database, err err
 		return
 	}
 
+	sqlDB.SetMaxIdleConns(0)
 	db = &Database{name: dbName, sqlDB: sqlDB}
 	//dbCatalog[server] = make(map[string]*Database)
 	//dbCatalog[server][dbName] = db
