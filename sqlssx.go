@@ -112,7 +112,7 @@ func (server *Server) Execute(statement string, args ...interface{}) (result *sq
 //Query - Query a statement against the associated database
 //Returns *sql.Rows
 func (db *Database) Query(statement string, args ...interface{}) (sqlRows *sql.Rows, err error) {
-	Printer.Println(printssx.Loud, "Querying", statement)
+	Printer.Println(printssx.Loud, "Querying", statement, "with args", args)
 	sqlStatement, err := db.sqlDB.Prepare(statement)
 	if err != nil {
 		return
@@ -357,11 +357,21 @@ func (db *Database) InitTable(v interface{}, tng *TableNameGuide) (err error) {
 	// Add columns
 	for _, columnName = range structs.Names(v) {
 		if !extdata.StringArrayContains(columnNames, columnName) {
+			Printer.Println(printssx.Subtle, "Adding column", columnName, namesToFields[columnName].Tag("sql"))
 			//log.Println(columnName, "adding to", tableName)
 			query = "ALTER TABLE `" + tableName + "` ADD COLUMN " + columnName + " " + namesToFields[columnName].Tag("sql")
 			_, err = db.Execute(query)
 			if err != nil {
 				return
+			}
+		} else {
+			if modify := namesToFields[columnName].Tag("sqlModify"); modify == "true" {
+				Printer.Println(printssx.Subtle, "Modfying column", columnName, namesToFields[columnName].Tag("sql"))
+				query = "ALTER TABLE `" + tableName + "` MODIFY " + columnName + " " + namesToFields[columnName].Tag("sql")
+				_, err = db.Execute(query)
+				if err != nil {
+					return
+				}
 			}
 		}
 	}
