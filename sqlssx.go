@@ -14,21 +14,37 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-//Printer - Generic printer object provided by stachio/printerssx
+// Printer - Generic printer object provided by stachio/printerssx
 var Printer = printssx.New("SQLSSX", log.Println, log.Printf, printssx.Subtle, printssx.Subtle)
 
-//Database - Database struct used to encapsulate sqlssx functinos
+// Error - Package defined error struct to house sql statements
+type Error struct {
+	operation string
+	statement string
+	goerr     error
+}
+
+func (err *Error) Error() string {
+	return "Operation: " + err.operation + "\nStatement: " + err.statement + "\nError: " + err.goerr.Error()
+}
+
+// NewError - returns custom error type
+func NewError(operation, statement string, err error) *Error {
+	return &Error{operation: operation, statement: statement, goerr: err}
+}
+
+// Database - Database struct used to encapsulate sqlssx functinos
 type Database struct {
 	name  string
 	sqlDB *sql.DB
 }
 
-//GetName - Get function to protect name value
+// GetName - Get function to protect name value
 func (db *Database) GetName() string {
 	return db.name
 }
 
-//Server - Server struct for multiple databases on a server
+// Server - Server struct for multiple databases on a server
 type Server struct {
 	name string
 	port string
@@ -42,19 +58,21 @@ type Server struct {
 
 var serverCatalog = make(map[string]*Server)
 
-//Open - Open a pre-built database
-//Note: database MUST exists
+// Open - Open a pre-built database
+// Note: database MUST exists
 func Open(server, port, dbName, user string, pass []rune) (db *Database, err error) {
 	Printer.Printf(printssx.Moderate, "Opening database %s/%s\n", server, dbName)
-	sqlDB, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, string(pass), server, port, dbName))
-	if err != nil {
-		return
+	openStr := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, string(pass), server, port, dbName)
+	sqlDB, erro := sql.Open("mysql", openStr)
+	if erro != nil {
+		return nil, NewError("DB Open", openStr, erro)
 	}
 
 	// Pretty sure we need to do a simple query to ensure the db is connected
-	err = sqlDB.Ping()
-	if err != nil {
-		return
+	erro = sqlDB.Ping()
+	if erro != nil {
+		sqlDB.Close()
+		return nil, NewError("DB Ping", "", erro)
 	}
 
 	sqlDB.SetMaxIdleConns(0)
@@ -64,6 +82,7 @@ func Open(server, port, dbName, user string, pass []rune) (db *Database, err err
 	return
 }
 
+// NewServer - Returns a new server object
 func NewServer(name, port, dbName, user string, pass []rune) (server *Server, err error) {
 	Printer.Printf(printssx.Subtle, "Connecting to PRIMARY %s:%s:%s with user %s\n", name, port, dbName, user)
 	db, err := Open(name, port, dbName, user, pass)
@@ -90,39 +109,59 @@ func (server *Server) GetName() string {
 	return server.name
 }
 
-//Execute - Excecute a statement against the associated database
-func (db *Database) Execute(statement string, args ...interface{}) (out *sql.Result, err error) {
+// Prepare - Adapted sql prepare functionality to wrap custom error class
+func (db *Database) Prepare(statement string) (sqlStatement *sql.Stmt, err error) {
+	sqlStatement, erro := db.sqlDB.Prepare(statement)
+	//fmt.Println(statement)
+	operation := "SQL Prepare"
+	if erro != nil {
+		err = NewError(operation, statement, erro)
+	}
+	return
+}
+
+// Execute - Excecute a statement against the associated database
+func (db *Database) Execute(statement string, args ...interface{}) (result sql.Result, err error) {
 	Printer.Println(printssx.Loud, "Executing", statement)
-	sqlStatement, err := db.sqlDB.Prepare(statement)
+	parentOp := "SQL Execute"
+	sqlStatement, err := db.Prepare(statement)
 	if err != nil {
 		return
 	}
 
-	sqlResult, err := sqlStatement.Exec(args...)
+	result, erro := sqlStatement.Exec(args...)
+	if erro != nil {
+		err = NewError(parentOp, statement, erro)
+	}
 	sqlStatement.Close()
-	out = &sqlResult
 	return
 }
 
-func (server *Server) Execute(statement string, args ...interface{}) (result *sql.Result, err error) {
+// Execute - Server-based execute against primary database
+func (server *Server) Execute(statement string, args ...interface{}) (result sql.Result, err error) {
 	result, err = server.dbPrimary.Execute(statement, args...)
 	return
 }
 
-//Query - Query a statement against the associated database
-//Returns *sql.Rows
+// Query - Query a statement against the associated database
+// Returns *sql.Rows
 func (db *Database) Query(statement string, args ...interface{}) (sqlRows *sql.Rows, err error) {
 	Printer.Println(printssx.Loud, "Querying", statement, "with args", args)
-	sqlStatement, err := db.sqlDB.Prepare(statement)
+	parentOp := "SQL Query"
+	sqlStatement, err := db.Prepare(statement)
 	if err != nil {
 		return
 	}
 
-	sqlRows, err = sqlStatement.Query(args...)
+	sqlRows, erro := sqlStatement.Query(args...)
+	if erro != nil {
+		err = NewError(parentOp, statement, erro)
+	}
 	sqlStatement.Close()
 	return
 }
 
+// Query - Server-based query against primary database
 func (server *Server) Query(statement string, args ...interface{}) (sqlRows *sql.Rows, err error) {
 	sqlRows, err = server.dbPrimary.Query(statement, args...)
 	return
@@ -131,8 +170,8 @@ func (server *Server) Query(statement string, args ...interface{}) (sqlRows *sql
 //QueryRow - Query a statement against the provided database
 //Returns *sql.Row
 func (db *Database) QueryRow(statement string, args ...interface{}) (sqlRow *sql.Row, err error) {
-	Printer.Println(printssx.Loud, "Single query", statement)
-	sqlStatement, err := db.sqlDB.Prepare(statement)
+	Printer.Println(printssx.Loud, "Single query", statement, "with args", args)
+	sqlStatement, err := db.Prepare(statement)
 	if err != nil {
 		return
 	}
@@ -142,11 +181,97 @@ func (db *Database) QueryRow(statement string, args ...interface{}) (sqlRow *sql
 	return
 }
 
+// QueryRow - Server-based queryrow against primary database
 func (server *Server) QueryRow(statement string, args ...interface{}) (sqlRow *sql.Row, err error) {
 	sqlRow, err = server.dbPrimary.QueryRow(statement, args...)
 	return
 }
 
+type Condition struct {
+	Statement string
+	Glue      string
+}
+
+func glueConditions(conditions []Condition) string {
+	var statement string
+	for _, cond := range conditions {
+		statement += cond.Statement
+		if cond.Glue != "" {
+			statement += " " + cond.Glue
+		}
+	}
+	return statement
+}
+
+func constructSelect(table string, columns []string, conditions []Condition) (statement string) {
+	statement = fmt.Sprintf("SELECT %s FROM %s", strings.Join(columns, ", "), table)
+	if conditions != nil {
+		statement += " WHERE " + glueConditions(conditions)
+	}
+	Printer.Println(printssx.Loud, "Constructed statement:", statement)
+	return
+}
+
+var countStr = []string{"COUNT(*)"}
+
+// ForceFix - Completely useless data type meant to force various issues
+type ForceFix struct {
+}
+
+func (db *Database) Count(table string, conditions []Condition, args ...interface{}) (count uint64, err error) {
+	statement := constructSelect(table, countStr, conditions)
+	sqlRow, err := db.QueryRow(statement, args...)
+	if err != nil {
+		return
+	}
+
+	sqlRow.Scan(&count)
+	return
+}
+
+func (server *Server) Count(table string, conditions []Condition, args ...interface{}) (count uint64, err error) {
+	count, err = server.dbPrimary.Count(table, conditions, args...)
+	return
+}
+
+func (db *Database) Select(table string, columns []string, conditions []Condition, args ...interface{}) (sqlRows *sql.Rows, count uint64, err error) {
+	//statement := fmt.Sprintf("SELECT %%s FROM %s WHERE %s", table, conditi?%!(EXTRA string=ID, Command)ons)
+	statement := constructSelect(table, columns, conditions)
+	count, err = db.Count(table, conditions, args...)
+	//fmt.Println(count)
+	if err != nil || count == 0 {
+		return
+	}
+
+	sqlRows, err = db.Query(statement, args...)
+	return
+}
+
+func (server *Server) Select(table string, columns []string, conditions []Condition, args ...interface{}) (sqlRows *sql.Rows, count uint64, err error) {
+	sqlRows, count, err = server.dbPrimary.Select(table, columns, conditions, args...)
+	return
+}
+
+func (db *Database) SelectRow(table string, columns []string, conditions []Condition, args ...interface{}) (sqlRow *sql.Row, exists bool, err error) {
+	//statement := fmt.Sprintf("SELECT %%s FROM %s WHERE %s", table, conditions)
+	statement := constructSelect(table, columns, conditions)
+	count, err := db.Count(table, conditions, args...)
+	if err != nil || count == 0 {
+		exists = false
+		return
+	}
+
+	sqlRow, err = db.QueryRow(statement, args...)
+	exists = true
+	return
+}
+
+func (server *Server) SelectRow(table string, columns []string, conditions []Condition, args ...interface{}) (sqlRow *sql.Row, exists bool, err error) {
+	sqlRow, exists, err = server.dbPrimary.SelectRow(table, columns, conditions, args...)
+	return
+}
+
+/* Deprecating in favor of Select method
 func (db *Database) Count(statement string, args ...interface{}) (count uint64, err error) {
 	sqlRow, err := db.QueryRow(statement, args...)
 	if err != nil {
@@ -157,17 +282,19 @@ func (db *Database) Count(statement string, args ...interface{}) (count uint64, 
 	return
 }
 
+
 func (server *Server) Count(statement string, args ...interface{}) (count uint64, err error) {
 	count, err = server.dbPrimary.Count(statement, args...)
 	return
 }
+*/
 
 //Verify - Verifies the database exists
 func (server *Server) Verify(dbName string) (verified bool, err error) {
 	Printer.Println(printssx.Moderate, "Verifying database", dbName)
 
-	statement := "SELECT COUNT(*) FROM information_schema.schemata where schema_name = ?"
-	count, err := server.Count(statement, dbName)
+	//statement := "SELECT COUNT(*) FROM information_schema.schemata where schema_name = ?"
+	count, err := server.Count("information_schema.schemata", []Condition{{Statement: "schema_name = ?"}}, dbName)
 	if err != nil {
 		return
 	}
@@ -175,19 +302,20 @@ func (server *Server) Verify(dbName string) (verified bool, err error) {
 	if count == 0 {
 		verified = false
 	} else if count > 1 {
-		err = Printer.Errorf("Invalid database count? [%d]", count)
+		err = NewError("DB Verify", "", Printer.Errorf("Invalid database count? [%d]", count))
 		verified = false
 	}
 	return
 }
 
-//Connect - Connect to specific database
-//create flag will create database if not exists
+// Connect - Connect to specific database
+// create flag will create database if not exists
 func (server *Server) Connect(dbName string, create bool) (db *Database, err error) {
 	Printer.Printf(printssx.Subtle, "Connecting to %s:%s:%s with user %s\n", server.name, server.port, dbName, server.user)
 
+	operation := "DB Connect"
 	if server.dbPrimary == nil {
-		err = Printer.Errorf("Primary Database not set")
+		err = NewError(operation, "", Printer.Errorf("Primary Database not set"))
 		return
 	}
 
@@ -204,7 +332,7 @@ func (server *Server) Connect(dbName string, create bool) (db *Database, err err
 				return
 			}
 		} else {
-			err = fmt.Errorf("Database [%s] not found", dbName)
+			err = NewError(operation, "", fmt.Errorf("Database [%s] not found", dbName))
 			return
 		}
 	}
