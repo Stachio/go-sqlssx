@@ -58,10 +58,19 @@ type Server struct {
 
 var serverCatalog = make(map[string]*Server)
 
+func ServerByName(name string) *Server {
+	server, ok := serverCatalog[name]
+	if !ok {
+		return nil
+	}
+
+	return server
+}
+
 // Open - Open a pre-built database
 // Note: database MUST exists
 func Open(server, port, dbName, user string, pass []rune) (db *Database, err error) {
-	Printer.Printf(printssx.Moderate, "Opening database %s/%s\n", server, dbName)
+	Printer.Printf(printssx.Subtle, "Opening database %s/%s\n", server, dbName)
 	openStr := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, string(pass), server, port, dbName)
 	sqlDB, erro := sql.Open("mysql", openStr)
 	if erro != nil {
@@ -78,35 +87,41 @@ func Open(server, port, dbName, user string, pass []rune) (db *Database, err err
 	sqlDB.SetMaxIdleConns(0)
 	db = &Database{name: dbName, sqlDB: sqlDB}
 	//dbCatalog[server] = make(map[string]*Database)
-	//dbCatalog[server][dbName] = db
+	ServerByName(server).dbCatalog[dbName] = db
 	return
 }
 
 // NewServer - Returns a new server object
 func NewServer(name, port, dbName, user string, pass []rune) (server *Server, err error) {
 	Printer.Printf(printssx.Subtle, "Connecting to PRIMARY %s:%s:%s with user %s\n", name, port, dbName, user)
-	db, err := Open(name, port, dbName, user, pass)
-	if err != nil {
-		return
-	}
 
 	server = &Server{
 		name:          name,
 		port:          port,
 		user:          user,
 		pass:          pass,
-		dbPrimary:     db,
 		dbPrimaryName: dbName,
 		dbCatalog:     make(map[string]*Database),
 	}
-	server.dbCatalog[dbName] = db
 	serverCatalog[name] = server
+
+	db, err := Open(name, port, dbName, user, pass)
+	if err != nil {
+		return
+	}
+
+	server.dbPrimary = db
+
 	return
 }
 
 //GetName - Get function to protect name value
 func (server *Server) GetName() string {
 	return server.name
+}
+
+func (server *Server) DatabaseByName(name string) *Database {
+	return server.dbCatalog[name]
 }
 
 // Prepare - Adapted sql prepare functionality to wrap custom error class
