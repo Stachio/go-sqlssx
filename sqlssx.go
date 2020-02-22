@@ -233,6 +233,26 @@ var countStr = []string{"COUNT(*)"}
 type ForceFix struct {
 }
 
+func (db *Database) ExistsTable(tableName string) (bool, error) {
+	statement := "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?"
+	sqlRow, err := db.QueryRow(statement, db.name, tableName)
+	if err != nil {
+		return false, NewError("Table exists query", statement, err)
+	}
+
+	var count uint64
+	err = sqlRow.Scan(&count)
+	if err != nil {
+		return false, NewError("Table exists scan", "", err)
+	}
+
+	return count == 1, nil
+}
+
+func (server *Server) ExistsTable(tableName string) (bool, error) {
+	return server.dbPrimary.ExistsTable(tableName)
+}
+
 func (db *Database) Count(table string, conditions []Condition, args ...interface{}) (count uint64, err error) {
 	statement := constructSelect(table, countStr, conditions)
 	sqlRow, err := db.QueryRow(statement, args...)
@@ -332,6 +352,11 @@ func (server *Server) Connect(dbName string, create bool) (db *Database, err err
 	if server.dbPrimary == nil {
 		err = NewError(operation, "", Printer.Errorf("Primary Database not set"))
 		return
+	} else {
+		database := server.DatabaseByName(dbName)
+		if database != nil {
+			return database, nil
+		}
 	}
 
 	var verified bool
