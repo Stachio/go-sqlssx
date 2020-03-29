@@ -2,7 +2,9 @@ package sqlssx
 
 import (
 	"database/sql"
+	"encoding/xml"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"strings"
 
@@ -44,12 +46,27 @@ func (db *Database) GetName() string {
 	return db.name
 }
 
+type ConfigDatabase struct {
+	Name     string `xml:"name,attr"`
+	User     string `xml:"user"`
+	Password []byte `xml:"password"`
+}
+
+type ConfigServer struct {
+	Name      string            `xml:"name,attr"`
+	Port      string            `xml:"port,attr"`
+	Databases []*ConfigDatabase `xml:"database"`
+}
+
+type Config struct {
+	Servers []*ConfigServer `xml:"server"`
+}
+
 // Server - Server struct for multiple databases on a server
 type Server struct {
 	name string
 	port string
 	user string
-	pass []rune
 
 	dbCatalog     map[string]*Database //= make(map[string]*Database)
 	dbPrimaryName string
@@ -69,9 +86,9 @@ func ServerByName(name string) *Server {
 
 // Open - Open a pre-built database
 // Note: database MUST exists
-func Open(server, port, dbName, user string, pass []rune) (db *Database, err error) {
+func Open(server, port, dbName, user string, pass []byte) (db *Database, err error) {
 	Printer.Printf(printssx.Subtle, "Opening database %s/%s\n", server, dbName)
-	openStr := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, string(pass), server, port, dbName)
+	openStr := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&collation=utf8mb4_bin", user, string(pass), server, port, dbName)
 	sqlDB, erro := sql.Open("mysql", openStr)
 	if erro != nil {
 		return nil, NewError("DB Open", openStr, erro)
@@ -92,14 +109,12 @@ func Open(server, port, dbName, user string, pass []rune) (db *Database, err err
 }
 
 // NewServer - Returns a new server object
-func NewServer(name, port, dbName, user string, pass []rune) (server *Server, err error) {
+func NewServer(name, port, dbName, user string, pass []byte) (server *Server, err error) {
 	Printer.Printf(printssx.Subtle, "Connecting to PRIMARY %s:%s:%s with user %s\n", name, port, dbName, user)
 
 	server = &Server{
 		name:          name,
 		port:          port,
-		user:          user,
-		pass:          pass,
 		dbPrimaryName: dbName,
 		dbCatalog:     make(map[string]*Database),
 	}
@@ -113,6 +128,44 @@ func NewServer(name, port, dbName, user string, pass []rune) (server *Server, er
 	server.dbPrimary = db
 
 	return
+}
+
+func NewServerWithConfig(server string, database string, config *Config) (*Server, error) {
+	var foundServer *ConfigServer
+	for _, configServer := range config.Servers {
+		if configServer.Name == server {
+			foundServer = configServer
+			break
+		}
+	}
+	if foundServer == nil {
+		return nil, fmt.Errorf("Config file missing server %s", server)
+	}
+
+	var foundDatabase *ConfigDatabase
+	for _, configDatabase := range foundServer.Databases {
+		if configDatabase.Name == database {
+			foundDatabase = configDatabase
+			break
+		}
+	}
+	if foundDatabase == nil {
+		return nil, fmt.Errorf("Config file  server %s missing database %s", server, database)
+	}
+	return NewServer(server, foundServer.Port, database, foundDatabase.User, foundDatabase.Password)
+}
+
+func NewServerWithConfigFile(server string, database string, configPath string) (*Server, error) {
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	config := &Config{}
+	err = xml.Unmarshal(data, config)
+	if err != nil {
+		return nil, err
+	}
+	return NewServerWithConfig(server, database, config)
 }
 
 //GetName - Get function to protect name value
@@ -345,7 +398,7 @@ func (server *Server) Verify(dbName string) (verified bool, err error) {
 
 // Connect - Connect to specific database
 // create flag will create database if not exists
-func (server *Server) Connect(dbName string, create bool) (db *Database, err error) {
+func (server *Server) Connect(dbName string, user string, pass []byte, create bool) (db *Database, err error) {
 	Printer.Printf(printssx.Subtle, "Connecting to %s:%s:%s with user %s\n", server.name, server.port, dbName, server.user)
 
 	operation := "DB Connect"
@@ -376,7 +429,7 @@ func (server *Server) Connect(dbName string, create bool) (db *Database, err err
 			return
 		}
 	}
-	db, err = Open(server.name, server.port, dbName, server.user, server.pass)
+	db, err = Open(server.name, server.port, dbName, server.user, pass)
 	return
 }
 
