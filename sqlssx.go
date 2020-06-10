@@ -66,7 +66,7 @@ type Config struct {
 type Server struct {
 	name string
 	port string
-	user string
+	//user string
 
 	dbCatalog     map[string]*Database //= make(map[string]*Database)
 	dbPrimaryName string
@@ -265,7 +265,7 @@ func glueConditions(conditions []Condition) string {
 	for _, cond := range conditions {
 		statement += cond.Statement
 		if cond.Glue != "" {
-			statement += " " + cond.Glue
+			statement += " " + cond.Glue + " "
 		}
 	}
 	return statement
@@ -399,7 +399,7 @@ func (server *Server) Verify(dbName string) (verified bool, err error) {
 // Connect - Connect to specific database
 // create flag will create database if not exists
 func (server *Server) Connect(dbName string, user string, pass []byte, create bool) (db *Database, err error) {
-	Printer.Printf(printssx.Subtle, "Connecting to %s:%s:%s with user %s\n", server.name, server.port, dbName, server.user)
+	Printer.Printf(printssx.Subtle, "Connecting to %s:%s:%s with user %s\n", server.name, server.port, dbName, user)
 
 	operation := "DB Connect"
 	if server.dbPrimary == nil {
@@ -429,7 +429,7 @@ func (server *Server) Connect(dbName string, user string, pass []byte, create bo
 			return
 		}
 	}
-	db, err = Open(server.name, server.port, dbName, server.user, pass)
+	db, err = Open(server.name, server.port, dbName, user, pass)
 	return
 }
 
